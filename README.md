@@ -74,10 +74,10 @@ Then: **Settings → Pages → Deploy from a branch → `main` / root**. URL: `h
 
 ## Install as a Claude Code skill
 
-The repo doubles as a [Claude Code plugin marketplace](https://docs.claude.com/en/docs/claude-code/plugins). Install it once and just say *"publish this page with a password"* — the skill generates a strong passphrase, encrypts the HTML, and deploys it for you.
+The repo ships a [Claude Code plugin](https://docs.claude.com/en/docs/claude-code/plugins). Install it once and just say *"publish this page with a password"* — the skill generates a strong passphrase, encrypts the HTML, and deploys it for you.
 
 ```
-/plugin marketplace add MarceloCajueiro/html-password-gate
+/plugin marketplace add MarceloCajueiro/claude-plugins
 /plugin install html-password-gate@cajueiro-plugins
 ```
 
