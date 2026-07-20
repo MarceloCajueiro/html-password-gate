@@ -1,6 +1,6 @@
 ---
 name: html-password-gate
-description: Publish a password-protected static HTML page with no backend. The HTML is encrypted (AES-256-GCM, key via PBKDF2) BEFORE upload — only the ciphertext reaches the server, the password is typed and decrypted 100% in the browser. Use when the user wants to host a report/guide/artifact HTML behind a password, "upload it encrypted", put a password gate in front of a page without a backend, or deploy a private HTML to Cloudflare Pages or GitHub Pages.
+description: Password-protect an HTML file and publish it — a link only people with the password can open, with no backend and no login system. Use when the user wants to share a report/guide/artifact privately, "send this only to them", "a link that needs a password", host a page behind a password, "upload it encrypted", put a password gate in front of a page, or deploy a private HTML to Cloudflare Pages or GitHub Pages. Works by encrypting the HTML (AES-256-GCM, key via PBKDF2) before upload — only ciphertext reaches the server and decryption happens 100% in the browser.
 user_invocable: true
 ---
 
@@ -12,9 +12,14 @@ Turns any HTML file into a password-protected static page and publishes it to Cl
 
 - The HTML is **encrypted with AES-256-GCM before upload**. The host only ever stores base64 ciphertext — the content never goes up in plaintext.
 - The key is derived from the password via **PBKDF2-SHA256, 600,000 iterations** (OWASP recommendation). There is no key hidden in the code — you cannot reverse-engineer the content out without the password.
-- The password is typed on the access screen and decryption runs **entirely in the browser** (Web Crypto API). The password **never travels** to any server.
+- The password is typed on the access screen and decryption runs **entirely in the browser** (Web Crypto API). The page **never sends** the password anywhere.
+- Decryption needs a **secure context**: HTTPS, `localhost`, or a local file. Both documented hosts are HTTPS; a plain `http://` LAN host cannot decrypt (the page says so).
 
 > ⚠️ **Security is entirely the strength of the password.** Since the attacker gets the ciphertext + the decryption code, they can brute-force it *offline* (no rate limit). This skill **generates a long, random passphrase by default**. Never swap it for something short or guessable — that defeats the protection.
+
+Tell the user, when it matters, what this does **not** cover: whoever controls the deploy
+account could serve a page that steals the password; there is no revocation (anyone who
+opened it keeps a decryptable copy); and the title/subtitle/brand on the gate are public.
 
 ## Prerequisites
 
@@ -30,10 +35,12 @@ Scripts live at the plugin root. Reference them with `${CLAUDE_PLUGIN_ROOT}`.
 The user provides a path to a ready `.html`. If they want you to **create** the artifact, do that first, then encrypt.
 
 ### 2. Set the password
-**By default, generate a strong one:**
+**By default, generate a strong one** — and pass it to the next step through the
+environment, so it never lands in `ps`, in the shell history, or in this session's log:
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/gen-password.mjs
+export GATE_PASSWORD=$(node ${CLAUDE_PLUGIN_ROOT}/gen-password.mjs)
 ```
+Read it back with `echo "$GATE_PASSWORD"` only at the end, when you hand it to the user.
 Only use a user-supplied password if they insist — and if so, **warn** when it's weak (short, dictionary word, predictable).
 
 ### 3. Encrypt and generate the `index.html`
@@ -41,17 +48,21 @@ Create a deploy folder with a **single `index.html`** (the host serves the root)
 ```bash
 mkdir -p <deploy-dir>
 node ${CLAUDE_PLUGIN_ROOT}/encrypt.mjs \
-  <input.html> "<password>" <deploy-dir>/index.html \
+  <input.html> <deploy-dir>/index.html \
   --brand "Your brand" \
   --title "Restricted access" \
   --subtitle "Short line explaining what this is and who the password is for."
 ```
-The `--brand`, `--title`, `--subtitle` flags customize the password screen (all optional; generic defaults). Text is auto-escaped.
+The password comes from `GATE_PASSWORD` (set in the previous step), never as an argument.
+The `--brand`, `--title`, `--subtitle` flags customize the password screen (all optional; generic defaults). Text is auto-escaped — and **not encrypted**, so keep anything confidential out of them.
+
+The deploy folder must hold **only** `index.html`: deploying the working directory would
+upload the plaintext input alongside it, which is the one leak that breaks everything.
 
 ### 4. Validate locally (before uploading)
 Confirm the right password decrypts and the wrong one fails. Open the file (`open <deploy-dir>/index.html`) and test, or drive it with a headless browser if available. Minimum check: the `index.html` **does not contain** the original content in plaintext — `grep` for a unique snippet of the input HTML must return 0:
 ```bash
-grep -c "<unique-snippet-of-original>" <deploy-dir>/index.html   # must be 0
+! grep -q "<unique-snippet-of-original>" <deploy-dir>/index.html && echo "clean"
 ```
 
 ### 5a. Deploy to Cloudflare Pages
@@ -80,7 +91,7 @@ Then: **Settings → Pages → Deploy from a branch → `main` / root**. URL: `h
 ### 6. Validate live
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" <url>        # 200
-curl -s <url> | grep -c "<unique-snippet-of-original>" # must be 0
+curl -s <url> | grep -q "<unique-snippet-of-original>" || echo "clean"
 ```
 
 ### 7. Deliver

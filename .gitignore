@@ -1,5 +1,6 @@
 .DS_Store
 node_modules/
-# local test artifacts
-/index.html
-*.local.html
+# Never track HTML here: not the encrypted output, and above all not the
+# plaintext input — that one is the whole leak.
+*.html
+dist/

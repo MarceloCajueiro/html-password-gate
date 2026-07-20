@@ -4,35 +4,81 @@
 // index.html with a password screen + decryption that runs 100% in the browser.
 //
 // Usage:
-//   node encrypt.mjs <input.html> <password> <output.html> [--title "..."] [--subtitle "..."] [--brand "..."]
+//   GATE_PASSWORD=… node encrypt.mjs <input.html> <output.html> [--title "..."] [--subtitle "..."] [--brand "..."]
 //
-// The hosting server only ever receives the ciphertext; the password never travels.
-// Security is entirely the strength of the password (offline brute-force is possible
-// because the attacker holds the ciphertext + the code). Always use a long, random passphrase.
+// The password comes from the environment, never argv: an argument is visible in
+// `ps` to every local process and is written to the shell history forever.
+//
+// The hosting server only ever receives the ciphertext, and this page never sends
+// the password anywhere. Security is entirely the strength of the password (offline
+// brute-force is possible because the attacker holds the ciphertext + the code).
+// Always use a long, random passphrase.
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { webcrypto as crypto } from 'node:crypto';
+
+const USAGE = `html-password-gate — encrypt an HTML file behind a password screen
+
+Usage:
+  GATE_PASSWORD="<password>" node encrypt.mjs <input.html> <output.html> [options]
+
+The password is read from GATE_PASSWORD, not from the command line, so it stays
+out of \`ps\` and out of your shell history. Generate one with gen-password.mjs:
+
+  export GATE_PASSWORD=$(node gen-password.mjs)
+
+Options:
+  --title <text>     Heading on the password screen (default: "Restricted access").
+  --subtitle <text>  Line under the heading.
+  --brand <text>     Small label above the heading.
+  --help             Show this help.
+
+These three are NOT encrypted — they are readable by anyone who opens the URL.
+`;
+
+const VALUE_FLAGS = new Set(['title', 'subtitle', 'brand']);
 
 function parseArgs(argv) {
   const positional = [];
   const opts = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--title') opts.title = argv[++i];
-    else if (a === '--subtitle') opts.subtitle = argv[++i];
-    else if (a === '--brand') opts.brand = argv[++i];
-    else positional.push(a);
+    if (!a.startsWith('--')) { positional.push(a); continue; }
+    const key = a.slice(2);
+    if (!VALUE_FLAGS.has(key)) throw new Error(`unknown flag --${key}`);
+    const next = argv[i + 1];
+    if (next === undefined || next.startsWith('--')) throw new Error(`--${key} needs a value`);
+    opts[key] = next;
+    i++;
   }
   return { positional, opts };
 }
 
-const { positional, opts } = parseArgs(process.argv.slice(2));
-const [inputPath, password, outputPath] = positional;
-
-if (!inputPath || !password || !outputPath) {
-  console.error('Usage: node encrypt.mjs <input.html> <password> <output.html> [--title "..."] [--subtitle "..."] [--brand "..."]');
+function fail(message) {
+  console.error(`[html-password-gate] error: ${message}`);
   process.exit(1);
 }
+
+if (process.argv.includes('--help')) {
+  process.stdout.write(USAGE);
+  process.exit(0);
+}
+
+let positional, opts;
+try {
+  ({ positional, opts } = parseArgs(process.argv.slice(2)));
+} catch (e) {
+  fail(e.message);
+}
+const [inputPath, outputPath] = positional;
+const password = process.env.GATE_PASSWORD;
+
+if (!inputPath || !outputPath) {
+  process.stdout.write(USAGE);
+  process.exit(1);
+}
+if (!password) fail('GATE_PASSWORD is not set. Run: export GATE_PASSWORD=$(node gen-password.mjs)');
+if (!existsSync(inputPath)) fail(`input file not found: ${inputPath}`);
 
 const TITLE = opts.title || 'Restricted access';
 const SUBTITLE = opts.subtitle || 'This content is encrypted. Enter the password to open it.';
@@ -101,6 +147,7 @@ const shell = `<!DOCTYPE html>
       <button type="submit" id="go">Open</button>
     </div>
     <div class="err" id="err"></div>
+    <noscript><div class="err show">This page needs JavaScript: the content is encrypted and is decrypted in your browser.</div></noscript>
     <p class="hint">The password is never sent to any server — decryption happens entirely in your browser (AES-256-GCM, PBKDF2 ${ITERATIONS.toLocaleString('en-US')} iterations).</p>
   </form>
 
@@ -132,7 +179,15 @@ const shell = `<!DOCTYPE html>
     err.classList.remove('show');
     go.disabled = true;
     go.textContent = 'Opening…';
+    var html;
     try {
+      // WebCrypto only exists in a secure context. Served over plain http:// on a
+      // LAN it is simply absent — without this check the user is told the password
+      // is wrong and may weaken it chasing a problem that isn't there.
+      if (!window.crypto || !crypto.subtle) {
+        showError('This page needs HTTPS (or localhost) to decrypt. It cannot run over plain http://.');
+        return;
+      }
       var enc = new TextEncoder();
       var baseKey = await crypto.subtle.importKey('raw', enc.encode(pw.value), 'PBKDF2', false, ['deriveKey']);
       var key = await crypto.subtle.deriveKey(
@@ -147,34 +202,46 @@ const shell = `<!DOCTYPE html>
         key,
         b64ToBytes(P.ct)
       );
-      var html = new TextDecoder().decode(plainBuf);
-      // Replace the current document with the decrypted content while keeping the
-      // page's real URL. That is what makes internal anchors (#section) work — an
-      // iframe srcdoc (about:srcdoc) or a Blob URL (blob:) would treat an anchor
-      // click as navigation and lose the page.
-      // No document.write and no innerHTML: the HTML is parsed with DOMParser and
-      // the resulting <html> is adopted and swapped in via replaceChild.
-      var newDoc = new DOMParser().parseFromString(html, 'text/html');
-      var newRoot = document.importNode(newDoc.documentElement, true);
-      document.replaceChild(newRoot, document.documentElement);
-      // Re-run the content's <script> tags (scripts inserted by parsing/cloning
-      // do not execute on their own).
-      var scripts = document.querySelectorAll('script');
-      for (var i = 0; i < scripts.length; i++) {
-        var old = scripts[i];
-        var s = document.createElement('script');
-        if (old.src) { s.src = old.src; } else { s.textContent = old.textContent; }
-        old.parentNode.replaceChild(s, old);
-      }
-      // If the URL already carried a hash, scroll to the target after the swap.
-      if (location.hash) {
-        var target = document.getElementById(location.hash.slice(1));
-        if (target) target.scrollIntoView();
-      }
+      html = new TextDecoder().decode(plainBuf);
+      pw.value = ''; // don't keep the password around once it has done its job
     } catch (ex) {
+      // Only the crypto above means "wrong password" — a failure in the DOM swap
+      // below must not be reported as one.
       showError('Incorrect password. Try again.');
       pw.value = '';
       pw.focus();
+      return;
+    }
+
+    // Replace the current document with the decrypted content while keeping the
+    // page's real URL. That is what makes internal anchors (#section) work — an
+    // iframe srcdoc (about:srcdoc) or a Blob URL (blob:) would treat an anchor
+    // click as navigation and lose the page.
+    // No document.write and no innerHTML: the HTML is parsed with DOMParser and
+    // the resulting <html> is adopted and swapped in via replaceChild.
+    var newDoc = new DOMParser().parseFromString(html, 'text/html');
+    var newRoot = document.importNode(newDoc.documentElement, true);
+    document.replaceChild(newRoot, document.documentElement);
+    // Re-run the content's <script> tags (scripts inserted by parsing/cloning
+    // do not execute on their own).
+    var scripts = document.querySelectorAll('script');
+    for (var i = 0; i < scripts.length; i++) {
+      var old = scripts[i];
+      var s = document.createElement('script');
+      // Copy every attribute, not just src: type="module" would otherwise run as
+      // a classic script (and an application/json island would run as code), and
+      // integrity/crossorigin would be dropped — silently disabling SRI on the
+      // content we are supposed to be protecting.
+      for (var j = 0; j < old.attributes.length; j++) {
+        s.setAttribute(old.attributes[j].name, old.attributes[j].value);
+      }
+      if (!old.src) s.textContent = old.textContent;
+      old.parentNode.replaceChild(s, old);
+    }
+    // If the URL already carried a hash, scroll to the target after the swap.
+    if (location.hash) {
+      var target = document.getElementById(location.hash.slice(1));
+      if (target) target.scrollIntoView();
     }
   });
 })();
@@ -182,8 +249,11 @@ const shell = `<!DOCTYPE html>
 </body>
 </html>`;
 
-writeFileSync(outputPath, shell);
-console.log('OK — ' + outputPath);
+// Write-then-rename: a kill mid-write would otherwise leave a truncated page
+// where a working one was already published.
+writeFileSync(`${outputPath}.tmp`, shell);
+renameSync(`${outputPath}.tmp`, outputPath);
+console.log('[html-password-gate] OK — ' + outputPath);
 console.log('  plaintext:  ' + plaintext.length + ' bytes');
 console.log('  ciphertext: ' + payload.ct.length + ' chars (base64)');
 console.log('  output:     ' + Buffer.byteLength(shell) + ' bytes');

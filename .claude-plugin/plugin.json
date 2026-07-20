@@ -1,6 +1,6 @@
 {
   "name": "html-password-gate",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Password-protect a static HTML page with no backend: encrypt with AES-256-GCM before upload, decrypt in the browser.",
   "author": { "name": "Marcelo Cajueiro" },
   "homepage": "https://cajueiro.tech",
