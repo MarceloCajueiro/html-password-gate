@@ -27,7 +27,7 @@ opened it keeps a decryptable copy); and the title/subtitle/brand on the gate ar
 - For Cloudflare deploy: `wrangler` authenticated (`npx wrangler whoami`).
 - For GitHub Pages deploy: `git` + a GitHub repo.
 
-Scripts live at the plugin root. Reference them with `${CLAUDE_PLUGIN_ROOT}`.
+Scripts ship inside this skill, next to this file. Run them with the path of the directory this SKILL.md was loaded from - that path is already known and always correct.
 
 ## Steps
 
@@ -38,7 +38,7 @@ The user provides a path to a ready `.html`. If they want you to **create** the 
 **By default, generate a strong one** — and pass it to the next step through the
 environment, so it never lands in `ps`, in the shell history, or in this session's log:
 ```bash
-export GATE_PASSWORD=$(node ${CLAUDE_PLUGIN_ROOT}/gen-password.mjs)
+export GATE_PASSWORD=$(node "$SKILL_DIR/gen-password.mjs")
 ```
 Read it back with `echo "$GATE_PASSWORD"` only at the end, when you hand it to the user.
 Only use a user-supplied password if they insist — and if so, **warn** when it's weak (short, dictionary word, predictable).
@@ -47,7 +47,7 @@ Only use a user-supplied password if they insist — and if so, **warn** when it
 Create a deploy folder with a **single `index.html`** (the host serves the root):
 ```bash
 mkdir -p <deploy-dir>
-node ${CLAUDE_PLUGIN_ROOT}/encrypt.mjs \
+node "$SKILL_DIR/encrypt.mjs" \
   <input.html> <deploy-dir>/index.html \
   --brand "Your brand" \
   --title "Restricted access" \
