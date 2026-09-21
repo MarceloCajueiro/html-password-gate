@@ -8,7 +8,7 @@ GitHub Pages and Cloudflare Pages have no server-side login. So instead of prote
 - 🌐 One self-contained `index.html` — works the same on Cloudflare Pages, GitHub Pages, or any static host
 - 📦 Zero dependencies — two small Node scripts using only `node:crypto` and `node:fs`
 - 🔑 The password is read from the environment, never from `argv` — it stays out of `ps` and shell history
-- 🤖 Installable as a [Claude Code](https://docs.claude.com/en/docs/claude-code) skill
+- 🤖 **Installs as an Agent Skill** in any harness — Claude Code, pi, Codex, Cursor, Gemini CLI, ...
 
 > 📝 Full write-up: [How to password-protect a page with no backend at all](https://cajueiro.tech/blog/) — on the Cajueiro.tech blog.
 
@@ -40,12 +40,12 @@ cd html-password-gate
 
 # 1. Generate a strong password and keep it in the environment, not in argv
 #    (an argument would be visible in `ps` and saved to your shell history).
-export GATE_PASSWORD=$(node gen-password.mjs)
+export GATE_PASSWORD=$(node skills/html-password-gate/gen-password.mjs)
 echo "$GATE_PASSWORD"   # → cedar-harbor-quartz-…-8f2a1c9d — save it in a password manager
 
 # 2. Encrypt into a deploy folder that holds NOTHING but the encrypted page
 mkdir -p dist
-node encrypt.mjs content.html dist/index.html \
+node skills/html-password-gate/encrypt.mjs content.html dist/index.html \
   --brand "Your brand" \
   --title "Restricted access" \
   --subtitle "Enter the password to open."
@@ -82,14 +82,15 @@ Then: **Settings → Pages → Deploy from a branch → `main` / root**. URL: `h
 
 ---
 
-## Install as a Claude Code skill
+## Install as an Agent Skill
 
-The repo ships a [Claude Code plugin](https://docs.claude.com/en/docs/claude-code/plugins). Install it once and just say *"publish this page with a password"* — the skill generates a strong passphrase, encrypts the HTML, and deploys it for you.
+```bash
+npx skills add MarceloCajueiro/html-password-gate
+```
 
-```
-/plugin marketplace add MarceloCajueiro/claude-plugins
-/plugin install html-password-gate@cajueiro-plugins
-```
+The [skills.sh](https://skills.sh) CLI asks which harness to install into — Claude Code, pi, Codex, Cursor, Gemini CLI and the rest. It copies the **whole skill directory**, so `encrypt.mjs` and `gen-password.mjs` travel with it and there is nothing else to install. Install it once and just say *"publish this page with a password"*: the skill generates a strong passphrase, encrypts the HTML, and deploys it for you.
+
+The same scripts also run standalone from a clone, as in the quick start above.
 
 ---
 
@@ -97,8 +98,8 @@ The repo ships a [Claude Code plugin](https://docs.claude.com/en/docs/claude-cod
 
 | File | What it does |
 |------|--------------|
-| [`gen-password.mjs`](gen-password.mjs) | Draws a random 6-word passphrase + hex suffix from a CSPRNG (~68 bits). |
-| [`encrypt.mjs`](encrypt.mjs) | Encrypts an HTML file (AES-256-GCM, PBKDF2 600k) and emits a self-contained `index.html` with the password screen + browser-side decryption. Reads the password from `GATE_PASSWORD`. |
+| [`gen-password.mjs`](skills/html-password-gate/gen-password.mjs) | Draws a random 6-word passphrase + hex suffix from a CSPRNG (~68 bits). |
+| [`encrypt.mjs`](skills/html-password-gate/encrypt.mjs) | Encrypts an HTML file (AES-256-GCM, PBKDF2 600k) and emits a self-contained `index.html` with the password screen + browser-side decryption. Reads the password from `GATE_PASSWORD`. |
 
 The page needs a **secure context** to decrypt: HTTPS, `localhost`, or a local file.
 Cloudflare Pages and GitHub Pages are HTTPS by default; a plain `http://` host on a LAN
